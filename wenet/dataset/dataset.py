@@ -33,6 +33,7 @@ from torch.utils.data import Dataset, DataLoader
 import wenet.dataset.kaldi_io as kaldi_io
 from wenet.dataset.wav_distortion import distort_wav_conf
 from wenet.utils.common import IGNORE_ID
+
 torchaudio.set_audio_backend("sox_io")
 
 
@@ -149,8 +150,8 @@ def _load_wav_with_speed(wav_file, speed):
     if speed == 1.0:
         wav, sr = torchaudio.load(wav_file)
     else:
-        si, _ = torchaudio.info(wav_file)
-
+        sample_rate = torchaudio.backend.sox_io_backend.info(
+            wav_file).sample_rate
         # get torchaudio version
         ta_no = torchaudio.__version__.split(".")
         ta_version = 100 * int(ta_no[0]) + 10 * int(ta_no[1])
@@ -159,17 +160,15 @@ def _load_wav_with_speed(wav_file, speed):
             # Note: deprecated in torchaudio>=0.8.0
             E = sox_effects.SoxEffectsChain()
             E.append_effect_to_chain('speed', speed)
-            E.append_effect_to_chain("rate", si.rate)
+            E.append_effect_to_chain("rate", sample_rate)
             E.set_input_file(wav_file)
             wav, sr = E.sox_build_flow_effects()
         else:
             # Note: enable in torchaudio>=0.8.0
             wav, sr = sox_effects.apply_effects_file(
                 wav_file,
-                [['speed', str(speed)], ['rate', str(si.rate)]])
+                [['speed', str(speed)], ['rate', str(sample_rate)]])
 
-    # sox will normalize the waveform, scale to [-32768, 32767]
-    wav = wav * (1 << 15)
     return wav, sr
 
 
@@ -206,7 +205,12 @@ def _extract_feature(batch, speed_perturb, wav_distortion_conf,
             # 1 for general wav.scp, 3 for segmented wav.scp
             assert len(value) == 1 or len(value) == 3
             wav_path = value[0]
-            sample_rate = torchaudio.backend.sox_io_backend.info(wav_path).sample_rate
+            sample_rate = torchaudio.backend.sox_io_backend.info(
+                wav_path).sample_rate
+            if 'resample' in feature_extraction_conf:
+                resample_rate = feature_extraction_conf['resample']
+            else:
+                resample_rate = sample_rate
             if speed_perturb:
                 if len(value) == 3:
                     logging.error(
@@ -222,10 +226,13 @@ def _extract_feature(batch, speed_perturb, wav_distortion_conf,
                     waveform, sample_rate = torchaudio.backend.sox_io_backend.load(
                         filepath=wav_path,
                         num_frames=end_frame - start_frame,
-                        offset=start_frame)
+                        frame_offset=start_frame)
                 else:
                     waveform, sample_rate = torchaudio.load(wav_path)
-                waveform = waveform * (1 << 15)
+            waveform = waveform * (1 << 15)
+            if resample_rate != sample_rate:
+                waveform = torchaudio.transforms.Resample(
+                    orig_freq=sample_rate, new_freq=resample_rate)(waveform)
 
             if wav_distortion_rate > 0.0:
                 r = random.uniform(0, 1)
@@ -241,7 +248,7 @@ def _extract_feature(batch, speed_perturb, wav_distortion_conf,
                 frame_shift=feature_extraction_conf['frame_shift'],
                 dither=wav_dither,
                 energy_floor=0.0,
-                sample_frequency=sample_rate)
+                sample_frequency=resample_rate)
             mat = mat.detach().numpy()
             feats.append(mat)
             keys.append(x[0])

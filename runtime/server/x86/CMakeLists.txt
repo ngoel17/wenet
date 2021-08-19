@@ -78,7 +78,10 @@ find_package(Torch REQUIRED PATHS ${libtorch_SOURCE_DIR} NO_DEFAULT_PATH)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS} -DC10_USE_GLOG")
 
 # utils
-add_library(utils STATIC utils/utils.cc)
+add_library(utils STATIC
+  utils/string.cc
+  utils/utils.cc
+)
 
 # The original openfst uses GNU Build System to run configure and build.
 # So, we use "OpenFST port for Windows" to build openfst with cmake in Windows.
@@ -161,6 +164,8 @@ add_executable(websocket_client_main bin/websocket_client_main.cc)
 target_link_libraries(websocket_client_main PUBLIC websocket)
 add_executable(websocket_server_main bin/websocket_server_main.cc)
 target_link_libraries(websocket_server_main PUBLIC websocket)
+add_executable(label_checker_main bin/label_checker_main.cc)
+target_link_libraries(label_checker_main PUBLIC frontend decoder)
 
 if(GRPC)
   include_directories(${CMAKE_SOURCE_DIR}/grpc)
